@@ -5,8 +5,7 @@
 <?import java.lang.*?>
 <?import javafx.scene.layout.*?>
 
-
-<VBox maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="400.0" prefWidth="600.0" spacing="10.0" xmlns="http://javafx.com/javafx/8" xmlns:fx="http://javafx.com/fxml/1" fx:controller="main.Controller">
+<VBox maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="400.0" prefWidth="600.0" spacing="10.0" xmlns="http://javafx.com/javafx/8" xmlns:fx="http://javafx.com/fxml/1" fx:controller="Controller">
    <children>
       <HBox alignment="CENTER" spacing="10.0">
          <children>
@@ -41,7 +40,7 @@
          </padding>
          <children>
             <Region HBox.hgrow="ALWAYS" />
-            <Button fx:id="btnDownload" mnemonicParsing="false" text="Download" />
+            <Button fx:id="btnDownload" mnemonicParsing="false" onAction="#handleDownloadAction" text="Download" />
             <Region prefHeight="10.0" prefWidth="10.0" />
             <Button fx:id="btnExit" mnemonicParsing="false" text="Exit" />
          </children>
