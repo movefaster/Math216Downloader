@@ -13,7 +13,7 @@ public class Main extends Application {
         Controller controller = loader.getController();
         controller.setStage(primaryStage);
         primaryStage.setTitle("Math 216 Recording Downloader");
-        primaryStage.setScene(new Scene(root, 500, 500));
+        primaryStage.setScene(new Scene(root, 700, 500));
         primaryStage.show();
     }
 

@@ -1,4 +1,7 @@
+import javafx.beans.binding.ObjectBinding;
 import javafx.collections.FXCollections;
+import javafx.collections.ListChangeListener;
+import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
@@ -23,6 +26,7 @@ import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.*;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -36,13 +40,15 @@ public class Controller implements Initializable {
     @FXML public Button btnBrowse;
     @FXML public CheckBox chkOverwrite;
     @FXML public Label lblStatus;
+    @FXML public Label lblExistingCount;
+    @FXML public Label lblAvailableCount;
 
     private List<String> urls;
     private String url;
     private Stage primaryStage;
     private File dir;
-    private List<String> available;
-    private List<String> existing;
+    private ObservableList<String> available;
+    private ObservableList<String> existing;
     private boolean overwrite;
     private DownloaderThread downloader;
     private Thread dlThread;
@@ -58,15 +64,17 @@ public class Controller implements Initializable {
             this.overwrite = overwrite;
         }
 
-        private void download(String url) {
+        private void download(String url, int index, int total) {
             try {
-                String[] urlParts = url.split("/");
-                String filename = urlParts[urlParts.length - 1];
+                String filename = getStringPart(url, "/", -1);
                 URL file = new URL(url);
                 ReadableByteChannel rbc = Channels.newChannel(file.openStream());
                 if (!new File(dir, filename).exists() || overwrite) {
                     FileOutputStream output = new FileOutputStream(new File(dir, filename));
                     output.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
+                    updateMessage(String.format("Downloading %s (%d/%d)", filename, index + 1, total));
+                } else {
+                    updateMessage("Skipped duplicate file " + filename);
                 }
             } catch (IOException e1) {
                 e1.printStackTrace();
@@ -76,9 +84,14 @@ public class Controller implements Initializable {
         @Override
         protected Void call() {
             for (int i = 0; i < urls.size(); i++) {
-                download(urls.get(i));
-                updateMessage("Downloading " + urls.get(i));
-                updateProgress(i, urls.size());
+                if (isCancelled()) break;
+                download(urls.get(i), i, urls.size());
+                updateProgress(i + 1, urls.size());
+            }
+            if (!isCancelled()) {
+                updateMessage("Completed.");
+            } else {
+                updateMessage("Cancelled.");
             }
             return null;
         }
@@ -97,12 +110,42 @@ public class Controller implements Initializable {
                 dir = null;
             }
         }));
+
+        lblExistingCount.setText("Existing: No directory selected");
+
+        existing = FXCollections.observableArrayList();
+        available = FXCollections.observableArrayList();
+
+        existing.addListener(new ListChangeListener<String>() {
+            @Override
+            public void onChanged(Change<? extends String> c) {
+                lblExistingCount.setText("Existing: " + c.getList().size());
+            }
+        });
+
+        available.addListener(new ListChangeListener<String>() {
+            @Override
+            public void onChanged(Change<? extends String> c) {
+                lblAvailableCount.setText("Available: " + c.getList().size());
+            }
+        });
+
         progressBar.setProgress(0);
         url = "https://services.math.duke.edu/~cbray/216PreLecs/";
         updateAvailable(url);
         chkOverwrite.selectedProperty().addListener(((observable, oldValue, newValue) ->{
-            overwrite = newValue;
-            System.out.println("Overwrite is set to " + overwrite);
+            if (newValue) {
+                boolean option = AlertBox.displayYesNo("Warning", "This will erase all existing recordings and " +
+                        "download them anew.\nAre you sure?");
+                if (option) {
+                    overwrite = true;
+                } else {
+                    chkOverwrite.setSelected(false);
+                    overwrite = false;
+                }
+            } else {
+                overwrite = newValue;
+            }
         }));
     }
 
@@ -123,29 +166,34 @@ public class Controller implements Initializable {
 
     @FXML
     protected void handleDownloadAction(ActionEvent event) {
-        if (dir == null) {
-            AlertBox.display("Error", "You must select an output directory first.");
-        } else {
-            if (existing == null || available == null) {
-                throw new RuntimeException("Cannot initiate download.");
+        if (dlThread == null || !dlThread.isAlive()) {
+            if (dir == null) {
+                AlertBox.display("Error", "You must select an output directory first.");
             } else {
-                downloader = new DownloaderThread(available, dir, overwrite);
-                dlThread = new Thread(downloader);
-                dlThread.start();
-                progressBar.progressProperty().bind(downloader.progressProperty());
-                lblStatus.textProperty().bind(downloader.messageProperty());
-                downloader.messageProperty().addListener(((observable, oldValue, newValue) -> {
-                    System.out.println(newValue);
-                }));
-                try {
-                    dlThread.join();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+                if (existing == null || available == null) {
+                    throw new RuntimeException("Cannot initiate download.");
+                } else {
+                    downloader = new DownloaderThread(available, dir, overwrite);
+                    downloader.setOnSucceeded(value -> {
+                        AlertBox.display("Success", "Download completed.");
+                        updateExisting(dir);
+                        btnDownload.setText("Download");
+                    });
+                    downloader.setOnCancelled(value -> updateExisting(dir));
+                    dlThread = new Thread(downloader);
+                    dlThread.setDaemon(true);
+                    dlThread.start();
+                    progressBar.progressProperty().bind(downloader.progressProperty());
+                    lblStatus.textProperty().bind(downloader.messageProperty());
+                    downloader.messageProperty().addListener(((observable, oldValue, newValue) -> {
+                        System.out.println(newValue);
+                    }));
+                    btnDownload.setText("Cancel");
                 }
-                updateExisting(dir);  // trigger update of existing folder after download
-                progressBar.progressProperty().unbind();
-                lblStatus.textProperty().unbind();
             }
+        } else {
+            downloader.cancel();
+            btnDownload.setText("Download");
         }
     }
 
@@ -160,22 +208,22 @@ public class Controller implements Initializable {
     }
 
     @SuppressWarnings("unchecked")
-    void setListAvailable(List<String> files) {
-        listAvailable.setItems(FXCollections.observableArrayList(files));
+    void setListAvailable(ObservableList<String> files) {
+        ObservableList<String> filenames = FXCollections.observableArrayList(files);
+        listAvailable.setItems(FXCollections.observableArrayList(filenames.stream()
+                .map(e -> getStringPart(e, "/", -1))
+                .collect(Collectors.toList())));
     }
 
     void updateAvailable(String url) {
         try {
             Document doc = Jsoup.connect(url).get();
             Elements elements = doc.select("a");
-            available = elements.stream()
+            available.setAll(elements.stream()
                     .map(e -> e.attr("href"))
                     .filter(e -> e.startsWith("CBrayMath") && e.endsWith("mp4"))
-                    .map(e -> url + e).collect(Collectors.toList());
-            setListAvailable(available.stream().map(e -> {
-                String[] urlParts = e.split("/");
-                return urlParts[urlParts.length - 1];
-            }).collect(Collectors.toList()));
+                    .map(e -> url + e).collect(Collectors.toList()));
+            setListAvailable(available);
         } catch (IOException e) {
             e.printStackTrace();
             AlertBox.display("Network Error", "Unable to retrieve recordings web page.\n");
@@ -184,8 +232,8 @@ public class Controller implements Initializable {
     }
 
     @SuppressWarnings("unchecked")
-    private void setListExisting(List<String> files) {
-        listExisting.setItems(FXCollections.observableArrayList(files));
+    private void setListExisting(ObservableList<String> files) {
+        listExisting.setItems(files);
     }
 
     void updateExisting(File dir) {
@@ -195,12 +243,31 @@ public class Controller implements Initializable {
                 return pathname.isFile() && filename.startsWith("CBrayMath") && filename.endsWith("mp4");
             });
             if (files == null) files = new File[0];
-            existing = Stream.of(files).map(File::getName).collect(Collectors.toList());
+            existing.setAll(Stream.of(files).map(File::getName).collect(Collectors.toList()));
             setListExisting(existing);
         } else {
             existing = null;
-            setListExisting(new ArrayList<>());
+            setListExisting(FXCollections.observableArrayList());
         }
+    }
+
+    /**
+     * Retrieves an arbitrary part after splitting a string using the given regex.
+     * If n is negative, it will retrieve the last n-th part of the string
+     * (similar to python syntax array[-n]).
+     * @param s the string to be split
+     * @param regex the regular expression to split the string
+     * @param n the n-th part of the string to be retrieved. If it's negative, the
+     *          last n-th part
+     * @return the n-th part, or last n-th part, of a given string split by regex
+     */
+
+    private static String getStringPart(String s, String regex, int n) {
+        String[] parts = s.split(regex);
+        if (Math.abs(n) >= parts.length) throw new IllegalArgumentException(String.format("N cannot be larger" +
+                " than the length (%d) of the split string.", parts.length));
+        if (n >= 0) return parts[n];
+        else return parts[parts.length + n];
     }
 
 }
