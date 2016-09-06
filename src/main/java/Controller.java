@@ -1,4 +1,19 @@
-import javafx.beans.binding.ObjectBinding;
+/*
+ * Copyright [2016] [Morton Mo]
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
@@ -7,30 +22,27 @@ import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
 import javafx.scene.control.*;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.TextField;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
+import org.apache.commons.validator.routines.UrlValidator;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.select.Elements;
 
-import java.awt.*;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
-import java.util.*;
 import java.util.List;
-import java.util.function.Supplier;
+import java.util.ResourceBundle;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class Controller implements Initializable {
+    private static final String DEFAULT_URL = "https://services.math.duke.edu/~cbray/216PreLecs/";
+
     @FXML public TextField txtDirectory;
     @FXML public ListView listExisting;
     @FXML public ListView listAvailable;
@@ -42,6 +54,8 @@ public class Controller implements Initializable {
     @FXML public Label lblStatus;
     @FXML public Label lblExistingCount;
     @FXML public Label lblAvailableCount;
+    @FXML public TextField txtUrl;
+    @FXML public Button btnReload;
 
     private List<String> urls;
     private String url;
@@ -131,7 +145,8 @@ public class Controller implements Initializable {
         });
 
         progressBar.setProgress(0);
-        url = "https://services.math.duke.edu/~cbray/216PreLecs/";
+        url = DEFAULT_URL;
+        txtUrl.setText(DEFAULT_URL);
         updateAvailable(url);
         chkOverwrite.selectedProperty().addListener(((observable, oldValue, newValue) ->{
             if (newValue) {
@@ -147,6 +162,20 @@ public class Controller implements Initializable {
                 overwrite = newValue;
             }
         }));
+
+        btnReload.setOnAction(e -> {
+            String newUrl = txtUrl.getText();
+            String[] schemes = {"http", "https"};
+            UrlValidator validator = new UrlValidator(schemes);
+            if (validator.isValid(newUrl)) {
+                url = newUrl;
+                updateAvailable(url);
+            } else {
+                AlertBox.display("Error", "The URL you put in is not valid. Please make sure you are\n" +
+                        "using the correct URL to the lecture recordings.");
+                txtUrl.setText(DEFAULT_URL);
+            }
+        });
     }
 
     void setStage(Stage primaryStage) {
@@ -208,14 +237,14 @@ public class Controller implements Initializable {
     }
 
     @SuppressWarnings("unchecked")
-    void setListAvailable(ObservableList<String> files) {
+    private void setListAvailable(ObservableList<String> files) {
         ObservableList<String> filenames = FXCollections.observableArrayList(files);
         listAvailable.setItems(FXCollections.observableArrayList(filenames.stream()
                 .map(e -> getStringPart(e, "/", -1))
                 .collect(Collectors.toList())));
     }
 
-    void updateAvailable(String url) {
+    private void updateAvailable(String url) {
         try {
             Document doc = Jsoup.connect(url).get();
             Elements elements = doc.select("a");
@@ -236,7 +265,7 @@ public class Controller implements Initializable {
         listExisting.setItems(files);
     }
 
-    void updateExisting(File dir) {
+    private void updateExisting(File dir) {
         if (dir != null) {
             File[] files = dir.listFiles(pathname -> {
                 String filename = pathname.getAbsoluteFile().getName();
