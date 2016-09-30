@@ -28,8 +28,8 @@ public class Main extends Application {
         Parent root = loader.load();
         Controller controller = loader.getController();
         controller.setStage(primaryStage);
-        primaryStage.setTitle("Math 216 Recording Downloader");
-        primaryStage.setScene(new Scene(root, 700, 500));
+        primaryStage.setTitle("Math 216 Downloader");
+        primaryStage.setScene(new Scene(root, 700, 600));
         primaryStage.show();
     }
 

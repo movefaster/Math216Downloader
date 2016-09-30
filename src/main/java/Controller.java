@@ -90,6 +90,10 @@ public class Controller implements Initializable {
             }
         }));
 
+        txtStartsWith.textProperty().addListener(((observable, oldValue, newValue) -> startsWith = newValue));
+        txtEndsWith.textProperty().addListener(((observable, oldValue, newValue) -> endsWith = newValue));
+
+
         txtDirectory.setEditable(false);
         txtDirectory.setText("");
         txtDirectory.textProperty().addListener(((observable, oldValue, newValue) -> {
