@@ -1,3 +1,8 @@
 out
 .idea
 /target/
+*~
+.classpath
+/classes
+/.settings
+.project
