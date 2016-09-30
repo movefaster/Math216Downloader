@@ -17,7 +17,6 @@
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
-import javafx.concurrent.Task;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
@@ -30,18 +29,23 @@ import org.jsoup.nodes.Document;
 import org.jsoup.select.Elements;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.URL;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
+import java.util.Arrays;
 import java.util.List;
 import java.util.ResourceBundle;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class Controller implements Initializable {
-    private static final String DEFAULT_URL = "https://services.math.duke.edu/~cbray/216PreLecs/";
+//    private static final String DEFAULT_URL = "https://services.math.duke.edu/~cbray/216PreLecs/";
+    private static final String[] presetStrings = {"Lecture Recordings", "Past Exams", "Other"};
+    private static final String[] presetUrls = {"https://services.math.duke.edu/~cbray/216PreLecs/",
+            "https://services.math.duke.edu/~cbray/OldExams/107/", ""};
+    private static final String[] presetEndsWith = {"mp4", "pdf", ""};
+    private static final String[] presetStartsWith = {"CBrayMath", "", ""};
+
 
     @FXML public TextField txtDirectory;
     @FXML public ListView listExisting;
@@ -56,6 +60,9 @@ public class Controller implements Initializable {
     @FXML public Label lblAvailableCount;
     @FXML public TextField txtUrl;
     @FXML public Button btnReload;
+    @FXML public ComboBox<String> comboPreset;
+    @FXML public TextField txtStartsWith;
+    @FXML public TextField txtEndsWith;
 
     private List<String> urls;
     private String url;
@@ -63,56 +70,26 @@ public class Controller implements Initializable {
     private File dir;
     private ObservableList<String> available;
     private ObservableList<String> existing;
+    private String startsWith;
+    private String endsWith;
     private boolean overwrite;
     private DownloaderThread downloader;
     private Thread dlThread;
-
-    private class DownloaderThread extends Task<Void> {
-        private List<String> urls;
-        private File dir;
-        private boolean overwrite;
-
-        DownloaderThread(List<String> urls, File dir, boolean overwrite) {
-            this.urls = urls;
-            this.dir = dir;
-            this.overwrite = overwrite;
-        }
-
-        private void download(String url, int index, int total) {
-            try {
-                String filename = getStringPart(url, "/", -1);
-                URL file = new URL(url);
-                ReadableByteChannel rbc = Channels.newChannel(file.openStream());
-                if (!new File(dir, filename).exists() || overwrite) {
-                    FileOutputStream output = new FileOutputStream(new File(dir, filename));
-                    output.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
-                    updateMessage(String.format("Downloading %s (%d/%d)", filename, index + 1, total));
-                } else {
-                    updateMessage("Skipped duplicate file " + filename);
-                }
-            } catch (IOException e1) {
-                e1.printStackTrace();
-            }
-        }
-
-        @Override
-        protected Void call() {
-            for (int i = 0; i < urls.size(); i++) {
-                if (isCancelled()) break;
-                download(urls.get(i), i, urls.size());
-                updateProgress(i + 1, urls.size());
-            }
-            if (!isCancelled()) {
-                updateMessage("Completed.");
-            } else {
-                updateMessage("Cancelled.");
-            }
-            return null;
-        }
-    }
+    private Pattern pattern;
 
     @Override
     public void initialize(URL location, ResourceBundle resources) {
+        txtUrl.textProperty().addListener(((observable, oldValue, newValue) -> {
+            if (newValue.length() > 0 ^ txtUrl.isFocused()) {
+                reloadUrl();
+            }
+        }));
+        txtUrl.focusedProperty().addListener(((observable, oldValue, newValue) -> {
+            if (!newValue) {
+                reloadUrl();
+            }
+        }));
+
         txtDirectory.setEditable(false);
         txtDirectory.setText("");
         txtDirectory.textProperty().addListener(((observable, oldValue, newValue) -> {
@@ -125,7 +102,7 @@ public class Controller implements Initializable {
             }
         }));
 
-        lblExistingCount.setText("Existing: No directory selected");
+        lblExistingCount.setText("Existing: 0");
 
         existing = FXCollections.observableArrayList();
         available = FXCollections.observableArrayList();
@@ -144,10 +121,17 @@ public class Controller implements Initializable {
             }
         });
 
+        comboPreset.setItems(FXCollections.observableArrayList(Arrays.asList(presetStrings)));
+        comboPreset.getSelectionModel().selectedIndexProperty().addListener(((observable, oldValue, newValue) ->{
+            int index = newValue.intValue();
+            updateParameters(index);
+            if (index == presetStrings.length - 1) {  // If user selected other
+                txtUrl.requestFocus();
+            }
+        }));
+
         progressBar.setProgress(0);
-        url = DEFAULT_URL;
-        txtUrl.setText(DEFAULT_URL);
-        updateAvailable(url);
+
         chkOverwrite.selectedProperty().addListener(((observable, oldValue, newValue) ->{
             if (newValue) {
                 boolean option = AlertBox.displayYesNo("Warning", "This will erase all existing recordings and " +
@@ -163,19 +147,34 @@ public class Controller implements Initializable {
             }
         }));
 
-        btnReload.setOnAction(e -> {
-            String newUrl = txtUrl.getText();
-            String[] schemes = {"http", "https"};
-            UrlValidator validator = new UrlValidator(schemes);
-            if (validator.isValid(newUrl)) {
-                url = newUrl;
-                updateAvailable(url);
-            } else {
-                AlertBox.display("Error", "The URL you put in is not valid. Please make sure you are\n" +
-                        "using the correct URL to the lecture recordings.");
-                txtUrl.setText(DEFAULT_URL);
-            }
-        });
+        btnReload.setOnAction((event) -> reloadUrl());
+    }
+
+    private void reloadUrl() {
+        String newUrl = txtUrl.getText();
+        UrlValidator validator = new UrlValidator(new String[]{"http", "https"});
+        if (validator.isValid(newUrl)) {
+            url = newUrl;
+            updateAvailable(url);
+        } else {
+            AlertBox.display("Error", "The URL you put in is not valid. Please make sure you are\n" +
+                    "using the correct URL to the lecture recordings / exams.");
+            comboPreset.getSelectionModel().select(0);
+        }
+    }
+
+    /**
+     * Updates txtUrl, txtStartsWith, txtEndsWith when selected preset is changed
+     * @param index the selected index of the comboxPreset
+     */
+
+    private void updateParameters(int index) {
+        txtStartsWith.setText(presetStartsWith[index]);
+        txtEndsWith.setText(presetEndsWith[index]);
+        startsWith = presetStartsWith[index];
+        endsWith = presetEndsWith[index];
+        txtUrl.setText(presetUrls[index]);
+        url = presetUrls[index];
     }
 
     void setStage(Stage primaryStage) {
@@ -240,22 +239,24 @@ public class Controller implements Initializable {
     private void setListAvailable(ObservableList<String> files) {
         ObservableList<String> filenames = FXCollections.observableArrayList(files);
         listAvailable.setItems(FXCollections.observableArrayList(filenames.stream()
-                .map(e -> getStringPart(e, "/", -1))
+                .map(e -> Utils.getStringPart(e, "/", -1))
                 .collect(Collectors.toList())));
     }
 
     private void updateAvailable(String url) {
-        try {
-            Document doc = Jsoup.connect(url).get();
-            Elements elements = doc.select("a");
-            available.setAll(elements.stream()
-                    .map(e -> e.attr("href"))
-                    .filter(e -> e.startsWith("CBrayMath") && e.endsWith("mp4"))
-                    .map(e -> url + e).collect(Collectors.toList()));
-            setListAvailable(available);
-        } catch (IOException e) {
-            e.printStackTrace();
-            AlertBox.display("Network Error", "Unable to retrieve recordings web page.\n");
+        if (url.length() > 0) {
+            try {
+                Document doc = Jsoup.connect(url).get();
+                Elements elements = doc.select("a");
+                available.setAll(elements.stream()
+                        .map(e -> e.attr("href"))
+                        .filter(e -> e.startsWith(startsWith) && e.endsWith(endsWith))
+                        .map(e -> url + e).collect(Collectors.toList()));
+                setListAvailable(available);
+            } catch (IOException e) {
+                e.printStackTrace();
+                AlertBox.display("Network Error", "Unable to retrieve recordings web page.\n");
+            }
         }
 
     }
@@ -269,7 +270,7 @@ public class Controller implements Initializable {
         if (dir != null) {
             File[] files = dir.listFiles(pathname -> {
                 String filename = pathname.getAbsoluteFile().getName();
-                return pathname.isFile() && filename.startsWith("CBrayMath") && filename.endsWith("mp4");
+                return pathname.isFile() && filename.startsWith(startsWith) && filename.endsWith(endsWith);
             });
             if (files == null) files = new File[0];
             existing.setAll(Stream.of(files).map(File::getName).collect(Collectors.toList()));
@@ -278,25 +279,6 @@ public class Controller implements Initializable {
             existing = null;
             setListExisting(FXCollections.observableArrayList());
         }
-    }
-
-    /**
-     * Retrieves an arbitrary part after splitting a string using the given regex.
-     * If n is negative, it will retrieve the last n-th part of the string
-     * (similar to python syntax array[-n]).
-     * @param s the string to be split
-     * @param regex the regular expression to split the string
-     * @param n the n-th part of the string to be retrieved. If it's negative, the
-     *          last n-th part
-     * @return the n-th part, or last n-th part, of a given string split by regex
-     */
-
-    private static String getStringPart(String s, String regex, int n) {
-        String[] parts = s.split(regex);
-        if (Math.abs(n) >= parts.length) throw new IllegalArgumentException(String.format("N cannot be larger" +
-                " than the length (%d) of the split string.", parts.length));
-        if (n >= 0) return parts[n];
-        else return parts[parts.length + n];
     }
 
 }
